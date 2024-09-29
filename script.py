@@ -1,0 +1,113 @@
+import torch
+import librosa
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM,AutoModelForCausalLM, pipeline
+
+# モデルのロード（ローカルファイルを使用）
+def load_model_whisper():
+    """Whisperモデルとトークナイザーをロードする関数"""
+    # model_name = "openai/whisper-large"
+    # tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+    # model = AutoModelForSeq2SeqLM.from_pretrained(model_name, local_files_only=True)
+
+    # return model, tokenizer
+
+def load_model_gemma(huginng_face_token):
+    """Gemma2-9bモデルをローカルでロード"""
+    tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b-it")
+    model = AutoModelForCausalLM.from_pretrained(
+    "google/gemma-2-2b-it",
+    torch_dtype=torch.bfloat16,
+    token=huginng_face_token # 追加
+    ).to("cuda")
+
+    return model, tokenizer
+
+def transcribe_audio_whisper(audio_file):
+    """Whisperモデルを使って音声ファイルを文字起こし"""
+
+    whisper = pipeline("automatic-speech-recognition", "openai/whisper-medium", torch_dtype=torch.float16, device="cuda")
+
+    transcription = whisper(audio_file, return_timestamps=True)
+    return transcription["text"],transcription["chunks"]
+
+def important_text(text,timestamp, model, tokenizer):
+    """要点を絞り出す"""
+    input_text = "あなたは熟練の議事録担当者です。次の文から1文で要約のみを示せ。 ただし、日本語で書け。要約以外出力をしてはならない。\" " + text+ " \" "
+    input_ids = tokenizer(input_text, return_tensors="pt").to("cuda")
+    
+    outputs = model.generate(**input_ids, max_new_tokens=5000) 
+    summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return {"timestamp": timestamp,"summary": summary[len(input_text):]}
+
+
+def combine_chunks(chunks, max_length=500):
+    """チャンクを指定文字数でまとめる関数"""
+    combined_chunks = []
+    current_chunk = {
+        'timestamp': (chunks[0]['timestamp'][0], chunks[0]['timestamp'][1]),
+        'text': chunks[0]['text']
+    }
+
+    for i in range(1, len(chunks)):
+        next_chunk = chunks[i]
+        
+        # 現在のチャンクのテキストがmax_length未満なら結合
+        if (next_chunk['timestamp'][0] != 0) and len(current_chunk['text']) + len(next_chunk['text']) <= max_length:
+            current_chunk['text'] += " " + next_chunk['text']
+            # 終了時間（end）を更新
+            current_chunk['timestamp'] = (current_chunk['timestamp'][0], next_chunk['timestamp'][1])
+        else:
+            # テキストがmax_lengthに達したら保存
+            combined_chunks.append(current_chunk)
+            # 新しいチャンクの開始（このとき、startとendの両方を更新）
+            current_chunk = {
+                'timestamp': (next_chunk['timestamp'][0], next_chunk['timestamp'][1]),
+                'text': next_chunk['text']
+            }
+    
+    # 最後のチャンクを追加
+    combined_chunks.append(current_chunk)
+    
+    return combined_chunks
+def main(audio_file,hug_token):
+    """メイン処理"""
+    # Whisperモデルのロード
+    #whisper_model, whisper_tokenizer = load_model_whisper()
+
+    # 音声ファイルから文字起こし
+    text,chunks = transcribe_audio_whisper(audio_file)
+    torch.cuda.empty_cache()
+    if text:
+        print(f"Transcribed Chunks:\n{chunks}")
+        print(combine_chunks(chunks))
+        
+
+        # 文字起こし結果をテキストファイルに保存
+        #save_to_file("transcription.txt", text)
+        
+        # Gemma2-9bモデルのロード
+        gemma_model, gemma_tokenizer = load_model_gemma(hug_token)
+
+        # 要約処理
+        split_chunks = combine_chunks(chunks)
+        summaries = [important_text(part["text"],part["timestamp"],gemma_model, gemma_tokenizer) for part in split_chunks]
+        #summary = summarize_text(text, gemma_model, gemma_tokenizer)
+        [print(summary['summary']) for summary in summaries]
+        # final_summary = summarize_text(final_important_point,gemma_model, gemma_tokenizer) 
+        # # 要約結果を表示
+        # print(f"Summary:\n{final_summary}")
+
+        # 要約結果をテキストファイルに保存
+    else:
+        print("文字起こしに失敗しました。")
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python script.py audio_file")
+        sys.exit(1)
+
+    audio_file = sys.argv[1]
+    hug_token = sys.argv[2]
+    main(audio_file,hug_token)
