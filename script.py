@@ -1,5 +1,6 @@
 import torch
 import librosa
+import re
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM,AutoModelForCausalLM, pipeline
 
 # モデルのロード（ローカルファイルを使用）
@@ -32,12 +33,25 @@ def transcribe_audio_whisper(audio_file):
 
 def important_text(text,timestamp, model, tokenizer):
     """要点を絞り出す"""
-    input_text = "あなたは熟練の議事録担当者です。次の文から1文で要約のみを示せ。 ただし、日本語で書け。要約以外出力をしてはならない。\" " + text+ " \" "
+    input_text = """
+あなたは熟練の会議参加者です。以下の条件のみ許可する。原文から要約のみを箇条書きで書け。   
+
+* 条件  
+1. 要約のみを箇条書きで書け。それ以外は禁止する。
+2. 日本語で書け。
+3. 箇条書きは「*」を使え  
+4. 見出しは「##」 を使え。それ以外は禁止。
+
+* 原文
+    \" """ + text+ " \" "
+    
     input_ids = tokenizer(input_text, return_tensors="pt").to("cuda")
     
     outputs = model.generate(**input_ids, max_new_tokens=5000) 
-    summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return {"timestamp": timestamp,"summary": summary[len(input_text):]}
+    llm_result = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(input_text):]
+    summary = re.sub(r'##.*\n', '', llm_result)
+    summary = summary = re.sub(r'^\s*\n', '', summary, flags=re.MULTILINE)
+    return {"timestamp": timestamp,"summary": summary}
 
 
 def combine_chunks(chunks, max_length=500):
