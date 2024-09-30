@@ -1,2 +1,6 @@
 pyannote.audio
 transformers
+torch
+librosa
+transformers
+sentencepiece
