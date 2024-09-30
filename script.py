@@ -105,13 +105,8 @@ def main(audio_file,hug_token):
         # 要約処理
         split_chunks = combine_chunks(chunks)
         summaries = [important_text(part["text"],part["timestamp"],gemma_model, gemma_tokenizer) for part in split_chunks]
-        #summary = summarize_text(text, gemma_model, gemma_tokenizer)
+        # 要約結果を表示
         [print(summary['summary']) for summary in summaries]
-        # final_summary = summarize_text(final_important_point,gemma_model, gemma_tokenizer) 
-        # # 要約結果を表示
-        # print(f"Summary:\n{final_summary}")
-
-        # 要約結果をテキストファイルに保存
     else:
         print("文字起こしに失敗しました。")
 
@@ -119,7 +114,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python script.py audio_file")
+        print("Usage: python script.py audio_file hugging_face_API_key")
         sys.exit(1)
 
     audio_file = sys.argv[1]
