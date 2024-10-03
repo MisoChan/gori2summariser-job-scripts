@@ -3,20 +3,12 @@ import librosa
 import re
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM,AutoModelForCausalLM, pipeline
 
-# モデルのロード（ローカルファイルを使用）
-def load_model_whisper():
-    """Whisperモデルとトークナイザーをロードする関数"""
-    # model_name = "openai/whisper-large"
-    # tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-    # model = AutoModelForSeq2SeqLM.from_pretrained(model_name, local_files_only=True)
-
-    # return model, tokenizer
 
 def load_model_gemma(huginng_face_token):
     """Gemma2-9bモデルをローカルでロード"""
-    tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b-it")
+    tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b-jpn-it")
     model = AutoModelForCausalLM.from_pretrained(
-    "google/gemma-2-2b-it",
+    "google/gemma-2-2b-jpn-it",
     torch_dtype=torch.bfloat16,
     token=huginng_face_token # 追加
     ).to("cuda")
@@ -25,8 +17,9 @@ def load_model_gemma(huginng_face_token):
 
 def transcribe_audio_whisper(audio_file):
     """Whisperモデルを使って音声ファイルを文字起こし"""
-
-    whisper = pipeline("automatic-speech-recognition", "openai/whisper-medium", torch_dtype=torch.float16, device="cuda")
+    model_name = "openai/whisper-medium"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    whisper = pipeline("automatic-speech-recognition",model_name , torch_dtype=torch.float16, device="cuda")
 
     transcription = whisper(audio_file, return_timestamps=True)
     return transcription["text"],transcription["chunks"]
@@ -34,13 +27,23 @@ def transcribe_audio_whisper(audio_file):
 def important_text(text,timestamp, model, tokenizer):
     """要点を絞り出す"""
     input_text = """
-あなたは熟練の会議参加者です。以下の条件のみ許可する。原文から要約のみを箇条書きで書け。   
+以下の原文を要約してください：
+1. 内容を簡潔に要約としてまとめる
+2. 重要なポイントを「要点」として抜粋する
+3. 長さは元の文の50%以内に収める
+4. 見出しは 「##」を必ず使用する。それ以外の出力は許可しない。
+5. 以下のフォーマットを厳守する。それ以外は許可しない
 
-* 条件  
-1. 要約のみを箇条書きで書け。それ以外は禁止する。
-2. 日本語で書け。
-3. 箇条書きは「*」を使え  
-4. 見出しは「##」 を使え。それ以外は禁止。
+
+## 要約
+* {要約の内容}
+
+## 要点
+* {要点の内容}
+* {要点の内容}
+~ 
+* {要点の内容}
+
 
 * 原文
     \" """ + text+ " \" "
@@ -49,33 +52,35 @@ def important_text(text,timestamp, model, tokenizer):
     
     outputs = model.generate(**input_ids, max_new_tokens=5000) 
     llm_result = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(input_text):]
-    summary = re.sub(r'##.*\n', '', llm_result)
-    summary = summary = re.sub(r'^\s*\n', '', summary, flags=re.MULTILINE)
+    ## summary = re.sub(r'##.*\n', '',llm_result )
+    summary = summary = re.sub(r'^\s*\n', '', llm_result, flags=re.MULTILINE)
     return {"timestamp": timestamp,"summary": summary}
 
 
-def combine_chunks(chunks, max_length=500):
+def combine_chunks(chunks, max_length=2500):
     """チャンクを指定文字数でまとめる関数"""
     combined_chunks = []
     current_chunk = {
         'timestamp': (chunks[0]['timestamp'][0], chunks[0]['timestamp'][1]),
         'text': chunks[0]['text']
     }
-
+    last_timestamp = (0,0)
     for i in range(1, len(chunks)):
         next_chunk = chunks[i]
         
-        # 現在のチャンクのテキストがmax_length未満なら結合
-        if (next_chunk['timestamp'][0] != 0) and len(current_chunk['text']) + len(next_chunk['text']) <= max_length:
+        # 現在のチャンクのテキストがmax_length未満、またはTimestampの開始が0 なら結合
+        if  len(current_chunk['text']) + len(next_chunk['text']) <= max_length:
             current_chunk['text'] += " " + next_chunk['text']
             # 終了時間（end）を更新
             current_chunk['timestamp'] = (current_chunk['timestamp'][0], next_chunk['timestamp'][1])
+            last_timestamp =current_chunk['timestamp']
         else:
             # テキストがmax_lengthに達したら保存
             combined_chunks.append(current_chunk)
+            
             # 新しいチャンクの開始（このとき、startとendの両方を更新）
             current_chunk = {
-                'timestamp': (next_chunk['timestamp'][0], next_chunk['timestamp'][1]),
+                'timestamp': (last_timestamp[0]+next_chunk['timestamp'][0], last_timestamp[1]+next_chunk['timestamp'][1]),
                 'text': next_chunk['text']
             }
     
@@ -83,6 +88,8 @@ def combine_chunks(chunks, max_length=500):
     combined_chunks.append(current_chunk)
     
     return combined_chunks
+
+
 def main(audio_file,hug_token):
     """メイン処理"""
     # Whisperモデルのロード
