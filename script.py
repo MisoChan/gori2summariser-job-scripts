@@ -32,7 +32,10 @@ def important_text(text,timestamp, model, tokenizer):
 2. 重要なポイントを「要点」として抜粋する
 3. 長さは元の文の50%以内に収める
 4. 見出しは 「##」を必ず使用する。それ以外の出力は許可しない。
-5. 以下のフォーマットを厳守する。それ以外は許可しない
+5. 「**原文の要約**」という文字列の出力は禁止
+5. 原文の出力は禁止
+6. URGENT!! 以下のフォーマットを厳守する。それ以外の出力は許可しない。
+
 
 
 ## 要約
@@ -64,23 +67,21 @@ def combine_chunks(chunks, max_length=2500):
         'timestamp': (chunks[0]['timestamp'][0], chunks[0]['timestamp'][1]),
         'text': chunks[0]['text']
     }
-    last_timestamp = (0,0)
+
     for i in range(1, len(chunks)):
         next_chunk = chunks[i]
         
-        # 現在のチャンクのテキストがmax_length未満、またはTimestampの開始が0 なら結合
-        if  len(current_chunk['text']) + len(next_chunk['text']) <= max_length:
+        # 現在のチャンクのテキストがmax_length未満なら結合
+        if (next_chunk['timestamp'][0] != 0) and len(current_chunk['text']) + len(next_chunk['text']) <= max_length:
             current_chunk['text'] += " " + next_chunk['text']
             # 終了時間（end）を更新
             current_chunk['timestamp'] = (current_chunk['timestamp'][0], next_chunk['timestamp'][1])
-            last_timestamp =current_chunk['timestamp']
         else:
             # テキストがmax_lengthに達したら保存
             combined_chunks.append(current_chunk)
-            
             # 新しいチャンクの開始（このとき、startとendの両方を更新）
             current_chunk = {
-                'timestamp': (last_timestamp[0]+next_chunk['timestamp'][0], last_timestamp[1]+next_chunk['timestamp'][1]),
+                'timestamp': (next_chunk['timestamp'][0], next_chunk['timestamp'][1]),
                 'text': next_chunk['text']
             }
     
