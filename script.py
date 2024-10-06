@@ -24,9 +24,10 @@ def transcribe_audio_whisper(audio_file):
     transcription = whisper(audio_file, return_timestamps=True)
     return transcription["text"],transcription["chunks"]
 
-def important_text(text,timestamp, model, tokenizer):
+def important_text(text,end_at, model, tokenizer):
     """要点を絞り出す"""
     input_text = """
+あなたはプロのライターです。
 以下の原文を要約してください：
 1. 内容を簡潔に要約としてまとめる
 2. 重要なポイントを「要点」として抜粋する
@@ -36,7 +37,7 @@ def important_text(text,timestamp, model, tokenizer):
 5. 原文の出力は禁止
 6. URGENT!! 以下のフォーマットを厳守する。それ以外の出力は許可しない。
 
-
+---
 
 ## 要約
 * {要約の内容}
@@ -46,10 +47,9 @@ def important_text(text,timestamp, model, tokenizer):
 * {要点の内容}
 ~ 
 * {要点の内容}
+---
 
-
-* 原文
-    \" """ + text+ " \" "
+原文: \" """ + text+ " \" "
     
     input_ids = tokenizer(input_text, return_tensors="pt").to("cuda")
     
@@ -57,7 +57,7 @@ def important_text(text,timestamp, model, tokenizer):
     llm_result = tokenizer.decode(outputs[0], skip_special_tokens=True)[len(input_text):]
     ## summary = re.sub(r'##.*\n', '',llm_result )
     summary = summary = re.sub(r'^\s*\n', '', llm_result, flags=re.MULTILINE)
-    return {"timestamp": timestamp,"summary": summary}
+    return {"end_at": end_at,"summary": summary}
 
 
 def combine_chunks(chunks, max_length=2500):
@@ -67,8 +67,14 @@ def combine_chunks(chunks, max_length=2500):
         'timestamp': (chunks[0]['timestamp'][0], chunks[0]['timestamp'][1]),
         'text': chunks[0]['text']
     }
+    result_chunk = {
+        'end_at': 0,
+        'text': chunks[0]['text']
+    }
+    
+    end_at = 0
 
-    for i in range(1, len(chunks)):
+    for i in range(0, len(chunks)):
         next_chunk = chunks[i]
         
         # 現在のチャンクのテキストがmax_length未満なら結合
@@ -77,16 +83,22 @@ def combine_chunks(chunks, max_length=2500):
             # 終了時間（end）を更新
             current_chunk['timestamp'] = (current_chunk['timestamp'][0], next_chunk['timestamp'][1])
         else:
+            end_at = end_at + current_chunk['timestamp'][1]
+            result_chunk = {
+                'end_at': end_at,
+                'text': next_chunk['text']
+            }
             # テキストがmax_lengthに達したら保存
-            combined_chunks.append(current_chunk)
+            combined_chunks.append(result_chunk)
             # 新しいチャンクの開始（このとき、startとendの両方を更新）
             current_chunk = {
                 'timestamp': (next_chunk['timestamp'][0], next_chunk['timestamp'][1]),
                 'text': next_chunk['text']
             }
+
     
     # 最後のチャンクを追加
-    combined_chunks.append(current_chunk)
+    #combined_chunks.append(result_chunk)
     
     return combined_chunks
 
@@ -100,7 +112,6 @@ def main(audio_file,hug_token):
     text,chunks = transcribe_audio_whisper(audio_file)
     torch.cuda.empty_cache()
     if text:
-        print(f"Transcribed Chunks:\n{chunks}")
         print(combine_chunks(chunks))
         
 
@@ -112,9 +123,9 @@ def main(audio_file,hug_token):
 
         # 要約処理
         split_chunks = combine_chunks(chunks)
-        summaries = [important_text(part["text"],part["timestamp"],gemma_model, gemma_tokenizer) for part in split_chunks]
+        summaries = [important_text(part["text"],part["end_at"],gemma_model, gemma_tokenizer) for part in split_chunks]
         # 要約結果を表示
-        [print(summary['summary']) for summary in summaries]
+        [print(summary) for summary in summaries]
     else:
         print("文字起こしに失敗しました。")
 
